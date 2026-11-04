@@ -1,0 +1,43 @@
+name: Update PA election results
+
+on:
+  workflow_dispatch:
+    inputs:
+      csv_url:
+        description: Direct CSV download URL from the PA Election Returns Report Center
+        required: true
+        type: string
+  schedule:
+    - cron: '*/30 * * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download latest CSV
+        env:
+          CSV_URL_INPUT: ${{ inputs.csv_url }}
+          CSV_URL_SECRET: ${{ secrets.PA_RESULTS_CSV_URL }}
+        run: |
+          URL="$CSV_URL_INPUT"
+          if [ -z "$URL" ]; then URL="$CSV_URL_SECRET"; fi
+          if [ -z "$URL" ]; then echo "Set PA_RESULTS_CSV_URL or run manually with csv_url"; exit 1; fi
+          curl --fail --location --retry 3 "$URL" -o data/UnOfficial_1132026091717PM.CSV
+          python3 - <<'PY'
+          import csv
+          p='data/UnOfficial_1132026091717PM.CSV'
+          with open(p, newline='', encoding='utf-8-sig') as f: rows=list(csv.DictReader(f))
+          required={'Election Name','County Name','Office Name','District Name','Party Name','Candidate Name','Votes'}
+          if not rows or not required.issubset(rows[0]): raise SystemExit('Unexpected CSV schema')
+          print('validated rows:', len(rows))
+          PY
+      - name: Commit update
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add data/UnOfficial_1132026091717PM.CSV
+          git diff --cached --quiet || (git commit -m "Update PA election results" && git push)
